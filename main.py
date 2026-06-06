@@ -2,6 +2,16 @@ import asyncio
 import os
 import threading
 
+
+import asyncio
+
+# 👇 FIX FOR PYTHON 3.14+ ASYNCIO BREAKING CHANGES
+try:
+    asyncio.get_event_loop()
+except RuntimeError:
+    asyncio.set_event_loop(asyncio.new_event_loop())
+
+
 import pyrogram
 from pyrogram import Client, filters, idle
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
