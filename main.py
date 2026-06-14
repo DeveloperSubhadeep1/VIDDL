@@ -2,6 +2,13 @@ import asyncio
 import os
 import threading
 
+# Create event loop if it doesn't exist to prevent RuntimeError on newer Python versions when importing Pyrogram
+try:
+    asyncio.get_event_loop()
+except RuntimeError:
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
 import pyrogram
 import pyrogram.session
 # Increase MTProto request timeouts and retries to prevent TimeoutError during big file uploads
