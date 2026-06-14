@@ -104,17 +104,17 @@ _USER_AGENTS = [
 ]
 
 # ---------------------------------------------------------------------------
-# Geo-bypass strategy
-#   SG (Singapore) → fewest globally banned sites, covers Indian + global OTT
-#   IN (India)     → fallback for strict Indian-only content
-#   US (USA)       → fallback for US-only content (YouTube, Twitch, Reddit)
-#   NL (Netherlands) → open internet, good EU coverage
+# Geo-bypass strategy for adult/video sites
+#   US (USA)         → best access: xHamster, PornHub, XNXX, XVIDEOS all served from US CDNs
+#   NL (Netherlands) → liberal laws, excellent CDN coverage for adult content
+#   SG (Singapore)   → fallback, neutral country with broad access
+#   DE (Germany)     → EU coverage, adult sites generally accessible
 # yt-dlp rotates through these via X-Forwarded-For spoofing
 # ---------------------------------------------------------------------------
-_GEO_COUNTRIES = ["SG", "IN", "US", "NL"]
+_GEO_COUNTRIES = ["US", "NL", "SG", "DE"]
 
 
-def _build_ydl_opts(quality: str, tracker: "DownloadProgress") -> dict:
+def _build_ydl_opts(url: str, quality: str, tracker: "DownloadProgress") -> dict:
     ua      = random.choice(_USER_AGENTS)
     country = random.choice(_GEO_COUNTRIES)   # rotate country per download
 
@@ -130,8 +130,11 @@ def _build_ydl_opts(quality: str, tracker: "DownloadProgress") -> dict:
         "fragment_retries":    5,
         "keepvideo":           False,
 
+        # --- Age gate bypass (xHamster, PornHub, Dailymotion, etc.) ---
+        # yt-dlp skips age-verification prompts when age_limit >= 18
+        "age_limit": 99,
+
         # --- Geo-bypass: spoof X-Forwarded-For header ---
-        # SG is default — least geo-blocked globally
         "geo_bypass":         True,
         "geo_bypass_country": country,
 
@@ -140,14 +143,31 @@ def _build_ydl_opts(quality: str, tracker: "DownloadProgress") -> dict:
             "User-Agent":      ua,
             "Accept-Language": "en-SG,en;q=0.9,en-IN;q=0.8,en-US;q=0.7",
             "Accept":          "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+            # Referer header — derived from the actual URL domain
+            # many adult CDNs reject requests without a matching Referer
+            "Referer": "/".join(url.split("/")[:3]) + "/",
         },
 
-        # --- Extractor-specific overrides for Indian streaming sites ---
+        # --- Extractor-specific overrides for adult/video sites ---
         "extractor_args": {
-            # JioCinema: force Android app path (avoids the videoModel KeyError)
-            "jiocinema": {"platform": ["android"]},
-            # Hotstar: pass resolution directly
-            "hotstar":   {"res": [quality]},
+            # xHamster — force MP4 stream
+            "xhamster":    {"type": ["mp4"]},
+            # PornHub — increase retries on HLS segments
+            "pornhub":     {"download_retrylimit": ["5"]},
+            # RedTube / YouPorn / Tube8 (all MindGeek network)
+            "redtube":     {"format": ["mp4"]},
+            "youporn":     {"format": ["mp4"]},
+            # SpankBang
+            "spankbang":   {"quality": [quality]},
+            # XNXX / XVIDEOS
+            "xnxx":        {},
+            "xvideos":     {},
+            # Eporner — high quality MP4
+            "eporner":     {"hd": ["1"]},
+            # Twitter/X (video tweets are common)
+            "twitter":     {},
+            # Reddit videos
+            "reddit":      {},
         },
     }
 
@@ -162,7 +182,7 @@ def _build_ydl_opts(quality: str, tracker: "DownloadProgress") -> dict:
 
 
 def _sync_download(url: str, quality: str, tracker: "DownloadProgress") -> str:
-    ydl_opts = _build_ydl_opts(quality, tracker)
+    ydl_opts = _build_ydl_opts(url, quality, tracker)
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
