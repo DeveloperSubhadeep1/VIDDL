@@ -2,16 +2,6 @@ import asyncio
 import os
 import threading
 
-
-import asyncio
-
-# 👇 FIX FOR PYTHON 3.14+ ASYNCIO BREAKING CHANGES
-try:
-    asyncio.get_event_loop()
-except RuntimeError:
-    asyncio.set_event_loop(asyncio.new_event_loop())
-
-
 import pyrogram
 from pyrogram import Client, filters, idle
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -348,6 +338,18 @@ async def requeue_pending_downloads():
 
 
 async def main():
+    print("Updating yt-dlp to latest version…")
+    try:
+        import subprocess, sys
+        result = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "-U", "yt-dlp", "--quiet"],
+            capture_output=True, text=True, timeout=60
+        )
+        import yt_dlp
+        print(f"[yt-dlp] Version: {yt_dlp.version.__version__}")
+    except Exception as e:
+        print(f"[yt-dlp] Auto-update failed (continuing anyway): {e}")
+
     print("Purging incomplete downloads from previous session…")
     purge_incomplete_downloads()
 
@@ -366,11 +368,11 @@ async def main():
     print("Starting aiohttp server (port 8081)…")
     await start_aiohttp_server()
 
-    print("Starting queue worker…")
-    asyncio.create_task(worker(app))
-
     print("Starting bot…")
     await app.start()
+
+    print("Starting queue worker…")
+    asyncio.create_task(worker(app))
 
     print("Bot is online.")
     await idle()
