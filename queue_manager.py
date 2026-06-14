@@ -1,6 +1,7 @@
 import asyncio
 import os
 
+import yt_dlp
 import yt_dlp.utils as _ydl_utils
 
 from config import MAX_QUEUE_SIZE, MAX_RETRIES, DOWNLOAD_DIR
@@ -14,9 +15,13 @@ download_queue: asyncio.Queue = asyncio.Queue(maxsize=MAX_QUEUE_SIZE)
 # Module-level counter so task numbers survive handler restarts within a session
 _task_counter = 0
 
-# Errors that should NOT be retried (yt-dlp already handles internal retries)
+# Errors that should NOT be retried
+# KeyError = extractor bug (site API changed); retrying won't help
+# ExtractorError = yt-dlp explicitly signalled extraction failure
 _NO_RETRY_ERRORS = (
     UnsupportedURLError,
+    KeyError,
+    _ydl_utils.ExtractorError,
 )
 
 
@@ -86,12 +91,18 @@ async def worker(client):
             except _NO_RETRY_ERRORS as exc:
                 # These errors won't benefit from retrying — fail immediately
                 await insert_or_update_video(url, {"status": "failed"})
-                msg = (
-                    "❌ This URL is not supported by yt-dlp.\n"
-                    "See supported sites: https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md"
-                    if isinstance(exc, UnsupportedURLError)
-                    else f"❌ Download failed:\n`{exc}`"
-                )
+                if isinstance(exc, UnsupportedURLError):
+                    msg = (
+                        "❌ This URL is not supported by yt-dlp.\n"
+                        "See supported sites: https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md"
+                    )
+                elif isinstance(exc, (KeyError, _ydl_utils.ExtractorError)):
+                    msg = (
+                        "❌ The site's extractor failed (the website may have changed its API).\n"
+                        "This is a yt-dlp bug — please try a different URL or try again later."
+                    )
+                else:
+                    msg = f"❌ Download failed:\n`{exc}`"
                 try:
                     await status_msg.edit_text(msg)
                 except Exception:

@@ -1,12 +1,13 @@
 import asyncio
 import glob
 import os
+import random
 import time
 
 import yt_dlp
 import yt_dlp.utils as _ydl_utils
 
-from config import DOWNLOAD_DIR
+from config import DOWNLOAD_DIR, COOKIES_FILE
 from progress import build_progress_string
 
 UnsupportedURLError = getattr(
@@ -82,7 +83,41 @@ async def _safe_edit(message, text: str):
         pass
 
 
-def _sync_download(url: str, quality: str, tracker: DownloadProgress) -> str:
+# ---------------------------------------------------------------------------
+# Rotating user-agent pool — randomised per download to reduce bot detection
+# ---------------------------------------------------------------------------
+_USER_AGENTS = [
+    # Chrome on Windows (generic, widely accepted)
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    # Chrome on Android — works well for Indian/Asian OTT apps
+    "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.6422.165 Mobile Safari/537.36",
+    "Mozilla/5.0 (Linux; Android 12; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.6367.179 Mobile Safari/537.36",
+    # Firefox on Windows
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0",
+    # Safari on macOS
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Safari/605.1.15",
+    # Edge on Windows
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36 Edg/125.0.0.0",
+    # Chrome on Linux (Render servers run Linux)
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+]
+
+# ---------------------------------------------------------------------------
+# Geo-bypass strategy
+#   SG (Singapore) → fewest globally banned sites, covers Indian + global OTT
+#   IN (India)     → fallback for strict Indian-only content
+#   US (USA)       → fallback for US-only content (YouTube, Twitch, Reddit)
+#   NL (Netherlands) → open internet, good EU coverage
+# yt-dlp rotates through these via X-Forwarded-For spoofing
+# ---------------------------------------------------------------------------
+_GEO_COUNTRIES = ["SG", "IN", "US", "NL"]
+
+
+def _build_ydl_opts(quality: str, tracker: "DownloadProgress") -> dict:
+    ua      = random.choice(_USER_AGENTS)
+    country = random.choice(_GEO_COUNTRIES)   # rotate country per download
+
     ydl_opts = {
         "format":              _build_format(quality),
         "outtmpl":             os.path.join(DOWNLOAD_DIR, "%(title)s.%(ext)s"),
@@ -93,15 +128,41 @@ def _sync_download(url: str, quality: str, tracker: DownloadProgress) -> str:
         "ignoreerrors":        False,
         "retries":             5,
         "fragment_retries":    5,
+        "keepvideo":           False,
+
+        # --- Geo-bypass: spoof X-Forwarded-For header ---
+        # SG is default — least geo-blocked globally
+        "geo_bypass":         True,
+        "geo_bypass_country": country,
+
+        # --- Rotating user-agent + neutral Accept-Language ---
         "http_headers": {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/125.0.0.0 Safari/537.36"
-            ),
+            "User-Agent":      ua,
+            "Accept-Language": "en-SG,en;q=0.9,en-IN;q=0.8,en-US;q=0.7",
+            "Accept":          "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
         },
-        "keepvideo": False,
+
+        # --- Extractor-specific overrides for Indian streaming sites ---
+        "extractor_args": {
+            # JioCinema: force Android app path (avoids the videoModel KeyError)
+            "jiocinema": {"platform": ["android"]},
+            # Hotstar: pass resolution directly
+            "hotstar":   {"res": [quality]},
+        },
     }
+
+    # Load cookies.txt if it exists (optional — not required for most sites)
+    if os.path.isfile(COOKIES_FILE):
+        ydl_opts["cookiefile"] = COOKIES_FILE
+        print(f"[downloader] cookies=ON  geo={country}  UA={ua[:45]}…")
+    else:
+        print(f"[downloader] cookies=OFF  geo={country}  UA={ua[:45]}…")
+
+    return ydl_opts
+
+
+def _sync_download(url: str, quality: str, tracker: "DownloadProgress") -> str:
+    ydl_opts = _build_ydl_opts(quality, tracker)
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
