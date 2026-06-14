@@ -3,6 +3,11 @@ import os
 import threading
 
 import pyrogram
+import pyrogram.session
+# Increase MTProto request timeouts and retries to prevent TimeoutError during big file uploads
+pyrogram.session.Session.WAIT_TIMEOUT = 90
+pyrogram.session.Session.MAX_RETRIES = 10
+
 from pyrogram import Client, filters, idle
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from flask import Flask, jsonify
@@ -118,20 +123,26 @@ async def handle_link(client, message):
     url      = message.text.strip()
     url_hash = generate_url_hash(url)
 
-    await insert_or_update_video(url, {"url": url, "url_hash": url_hash})
-
     video = await get_video(url)
-    if video and video.get("status") == "uploaded":
-        buttons = InlineKeyboardMarkup([
-            [InlineKeyboardButton("⬇️ Download again", callback_data=f"redownload|{url_hash}")],
-            [InlineKeyboardButton("Skip",              callback_data="skip")],
-        ])
-        await message.reply_text(
-            "✅ This video was already uploaded. Download again?",
-            reply_markup=buttons,
-        )
-        return
+    if video:
+        status = video.get("status")
+        if status in ("pending", "downloading", "uploading"):
+            await message.reply_text(
+                "⏳ This video is already in the download queue or being processed."
+            )
+            return
+        elif status == "uploaded":
+            buttons = InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬇️ Download again", callback_data=f"redownload|{url_hash}")],
+                [InlineKeyboardButton("Skip",              callback_data="skip")],
+            ])
+            await message.reply_text(
+                "✅ This video was already uploaded. Download again?",
+                reply_markup=buttons,
+            )
+            return
 
+    await insert_or_update_video(url, {"url": url, "url_hash": url_hash})
     await message.reply_text("Select quality:", reply_markup=_quality_buttons(url_hash))
 
 
@@ -148,6 +159,19 @@ async def handle_quality_selection(client, callback_query):
         await callback_query.answer(
             "❌ Session expired — please resend the link.", show_alert=True
         )
+        return
+
+    status = video.get("status")
+    if status in ("pending", "downloading", "uploading"):
+        await callback_query.answer(
+            "⏳ This video is already in the queue or being processed.", show_alert=True
+        )
+        try:
+            await callback_query.message.edit_text(
+                "⏳ This video is already in the queue or being processed."
+            )
+        except Exception:
+            pass
         return
 
     url          = video["url"]
@@ -215,9 +239,19 @@ async def handle_txt_file(client, message):
         all_urls = all_urls[:MAX_BATCH_URLS]
 
     user_mention = message.from_user.mention if message.from_user else "User"
-    queued = skipped = 0
+    queued = skipped = already_queued = already_uploaded = 0
 
     for url in all_urls:
+        video = await get_video(url)
+        if video:
+            status = video.get("status")
+            if status in ("pending", "downloading", "uploading"):
+                already_queued += 1
+                continue
+            elif status == "uploaded":
+                already_uploaded += 1
+                continue
+
         ok = await add_to_queue(url, message.chat.id, "720", user_mention=user_mention)
         if ok:
             queued += 1
@@ -225,8 +259,12 @@ async def handle_txt_file(client, message):
             skipped += 1
 
     reply = f"📋 Queued **{queued}** links at 720p."
+    if already_uploaded:
+        reply += f"\n✅ {already_uploaded} link(s) skipped (already uploaded)."
+    if already_queued:
+        reply += f"\n⏳ {already_queued} link(s) skipped (already processing/queued)."
     if skipped:
-        reply += f"\n⚠️ {skipped} link(s) skipped — queue is full."
+        reply += f"\n⚠️ {skipped} link(s) skipped (queue full)."
     await message.reply_text(reply)
 
 
@@ -338,17 +376,8 @@ async def requeue_pending_downloads():
 
 
 async def main():
-    print("Updating yt-dlp to latest version…")
-    try:
-        import subprocess, sys
-        result = subprocess.run(
-            [sys.executable, "-m", "pip", "install", "-U", "yt-dlp", "--quiet"],
-            capture_output=True, text=True, timeout=60
-        )
-        import yt_dlp
-        print(f"[yt-dlp] Version: {yt_dlp.version.__version__}")
-    except Exception as e:
-        print(f"[yt-dlp] Auto-update failed (continuing anyway): {e}")
+    print("Starting Flask server (port 8080)…")
+    threading.Thread(target=_run_flask, daemon=True).start()
 
     print("Purging incomplete downloads from previous session…")
     purge_incomplete_downloads()
@@ -359,17 +388,14 @@ async def main():
     print("Resetting stuck downloads…")
     await reset_stuck_downloads()
 
+    print("Starting bot…")
+    await app.start()
+
     print("Re-queuing pending downloads from previous session…")
     await requeue_pending_downloads()
 
-    print("Starting Flask server (port 8080)…")
-    threading.Thread(target=_run_flask, daemon=True).start()
-
     print("Starting aiohttp server (port 8081)…")
     await start_aiohttp_server()
-
-    print("Starting bot…")
-    await app.start()
 
     print("Starting queue worker…")
     asyncio.create_task(worker(app))
