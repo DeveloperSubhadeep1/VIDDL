@@ -6,3 +6,4 @@ yt-dlp
 psutil==6.0.0
 flask==3.0.3
 aiohttp==3.9.5
+https://github.com/jonathanong/heroku-buildpack-ffmpeg-latest.git
