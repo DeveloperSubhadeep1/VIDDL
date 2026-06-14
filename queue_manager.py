@@ -15,10 +15,12 @@ download_queue: asyncio.Queue = asyncio.Queue(maxsize=MAX_QUEUE_SIZE)
 _task_counter = 0
 
 # Errors that should NOT be retried (yt-dlp already handles internal retries)
-_NO_RETRY_ERRORS = (
+_ExtractorError = getattr(_ydl_utils, "ExtractorError", None)
+_NO_RETRY_ERRORS = tuple(filter(None, [
     UnsupportedURLError,
-    _ydl_utils.DownloadError,
-)
+    getattr(_ydl_utils, "DownloadError", None),
+    _ExtractorError,
+]))
 
 
 async def worker(client):
@@ -60,12 +62,19 @@ async def worker(client):
         except _NO_RETRY_ERRORS as exc:
             # These errors won't benefit from retrying — fail immediately
             await insert_or_update_video(url, {"status": "failed"})
-            msg = (
-                "❌ This URL is not supported by yt-dlp.\n"
-                "See supported sites: https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md"
-                if isinstance(exc, UnsupportedURLError)
-                else f"❌ Download failed:\n`{exc}`"
-            )
+            exc_str = str(exc)
+            if isinstance(exc, UnsupportedURLError):
+                msg = (
+                    "❌ This URL is not supported by yt-dlp.\n"
+                    "See supported sites: https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md"
+                )
+            elif "KeyError" in exc_str or "extractor error" in exc_str.lower():
+                msg = (
+                    "❌ Extractor error — the site's page structure may have changed.\n"
+                    "yt-dlp will be updated on next restart, or try again later."
+                )
+            else:
+                msg = f"❌ Download failed:\n`{exc_str[:300]}`"
             try:
                 await status_msg.edit_text(msg)
             except Exception:
