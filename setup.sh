@@ -10,11 +10,15 @@ echo "============================================="
 
 # 1. Update system packages
 echo "--> Updating package lists..."
-apt-get update -y
-
-# 2. Install dependencies (Python3, pip, venv, ffmpeg, wget)
-echo "--> Installing System Dependencies (Python3, pip, venv, ffmpeg, wget)..."
-apt-get install -y python3 python3-pip python3-venv ffmpeg wget curl git
+# Run apt‑get only if we have root permissions and apt‑get is present
+if command -v apt-get >/dev/null && [ "$(id -u)" -eq 0 ]; then
+    apt-get update -y
+    # 2. Install dependencies (Python3, pip, venv, ffmpeg, wget)
+    echo "--> Installing System Dependencies (Python3, pip, venv, ffmpeg, wget)..."
+    apt-get install -y python3 python3-pip python3-venv ffmpeg wget curl git
+else
+    echo "⚠️ Skipping apt‑get because the container is not running as root."
+fi
 
 # 3. Install/Update yt-dlp globally
 echo "--> Installing latest yt-dlp binary..."
