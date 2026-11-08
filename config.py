@@ -2,7 +2,7 @@ import os
 
 API_ID = int(os.environ.get("API_ID", "27972068"))
 API_HASH = os.environ.get("API_HASH", "6e7e2f5cdddba536b8e603b3155223c1")
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "7203772931:AAErbPc9RCu1HZ9wxwo0-8Hf7uPyq1G3Dm8")
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "8335925557:AAHKNKJMhL990oUrbCQBUXUucTNkVqjJjtc")
 MONGO_URI = os.environ.get("MONGO_URI", "mongodb+srv://viddl:viddl@cluster0.lnh9rzf.mongodb.net/?appName=Cluster0")
 DOWNLOAD_DIR  = "./downloads"
 COOKIES_FILE  = os.environ.get("COOKIES_FILE", "./cookies.txt")  # export from browser using cookies.txt extension
